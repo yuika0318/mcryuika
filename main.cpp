@@ -1132,6 +1132,11 @@ void intTimer(void)
         crankMotorPowerIN = 40;
         if(cnt1>900)//if(abs(allDeviation[18])<15&&cnt1>2000)//&&encoder.getTotalCount()>400)
         {
+            // 注意: 以下の3つは if が並列で、後の判定が前の pattern を上書きする。
+            // lineflag_cross は left && right のときだけ成立するため、cross のときは
+            // right と left も成立し、最後の left で pattern 51(左ハーフライン)になる。
+            // pattern 21 には遷移せず、51 → 52 で cross を再検出して 22 へ進む。
+            // else if にすると遷移が 21 → 22 に変わるため、実車で確認するまで直していない
             if (lineflag_cross)
             {
                 encoder.clear();
