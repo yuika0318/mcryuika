@@ -68,7 +68,9 @@ void Encoder::update(void)
     // _cnt =MTU2TCNT_1;
     //  MTU2TCNT_1 = 0x00;
 
-    _cnt = MTU2TCNT_1;
+    // MTU2TCNT_1 は 16bit。逆転すると 0 から下向きにカウントして 0xFFFF になる(-1 相当)ため、
+    // 符号付き 16bit として読む。符号なしのままだと逆転時に +65535 が加算される
+    _cnt = (int16_t)MTU2TCNT_1;
     MTU2TCNT_1 = 0x0000;
     _cnt_kyorikousinnmae = 0;
     _total_cnt = _total_cnt + _cnt;
@@ -81,7 +83,7 @@ void Encoder::update(void)
 
     _filter_value[_filter_cnt] = _cnt;
     _filter_cnt++;
-    if (_filter_cnt > Filter_N)
+    if (_filter_cnt >= Filter_N) // '>' だと _filter_value[Filter_N] へ配列外書き込みが起きる
     {
         _filter_cnt = 0;
     }
