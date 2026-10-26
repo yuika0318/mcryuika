@@ -36,6 +36,10 @@
 // 値を足すと右　減らすと左
 // 3100
 #define HANDLE_STEP 18 // 1 degree value
+// 舵角の上限(左右とも)。コード中で使う最大は crankHandleVal の 27、偏差×ゲインの最大は
+// 画像の半幅 80 × 0.32 = 25.6(pattern 52)なので、それらを切らない 30 とする。
+// このとき PWM のパルス幅は 1.07ms〜1.59ms(中心 1.33ms)で、サーボの一般的な範囲に収まる
+#define HANDLE_MAX_ANGLE 30
 
 //------------------------------------------------------------------//
 // マスク値設定 ×：マスクあり(無効)　○：マスク無し(有効)
@@ -1530,6 +1534,17 @@ void motor(int accele_l, int accele_r)
 //------------------------------------------------------------------//
 void handle(int angle)
 {
+    // 範囲外の値で angle * HANDLE_STEP が 16bit レジスタ(MTU2TGRD_0)からあふれたり、
+    // サーボが機械的な限界を越えたりするのを防ぐ
+    if (angle > HANDLE_MAX_ANGLE)
+    {
+        angle = HANDLE_MAX_ANGLE;
+    }
+    if (angle < -HANDLE_MAX_ANGLE)
+    {
+        angle = -HANDLE_MAX_ANGLE;
+    }
+
     msd_handle = -angle;
     // When the servo move from left to right in reverse, replace "-" with "+"
     MTU2TGRD_0 = SERVO_CENTER - angle * HANDLE_STEP;
