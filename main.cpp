@@ -549,12 +549,15 @@ int main(void)
                 fclose(fp);
             }
             sprintf(moji_work, "/storage/data%04d.csv", i);
+            bool saveOk = false; // SD に書き込めたか
             if ((fp = fopen(moji_work, "w")) != NULL)
             {
+                saveOk = true;
                 fprintf(fp, "Log %d\n", i);
             }
 
-            for (unsigned int i = 0; i < log_no; i++)
+            // fopen に失敗(SD 未挿入など)すると fp が NULL のため、書き込みは行わない
+            for (unsigned int i = 0; saveOk && i < log_no; i++)
             {
                 fprintf(fp, "%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d",
                         log_data[i].cnt_msdwritetime,
@@ -590,10 +593,14 @@ int main(void)
             // //                convertBCD_CharToLong(sensor_inp(0xff)), msd_handle, ALL_hennsa[45],
             // //                encoder.getCnt(), msd_l, msd_r);
             // //    }
-            fclose(fp); // fcloseしないと保存されない
+            if (saveOk)
+            {
+                fclose(fp); // fcloseしないと保存されない
+            }
             while (true)
             {
-                led_m(50, 0, 0, 1); // スタートバーセットOK状態→緑色点灯
+                // 保存成功→青色点灯、保存失敗→赤色点灯
+                led_m(50, saveOk ? 0 : 1, 0, saveOk ? 1 : 0);
             }
         }
     }
@@ -947,7 +954,8 @@ void intTimer(void)
 
     case 10:
 
-        if (endflag == false)
+        // 約60件/秒で記録するため、上限を確認しないと log_data[] を越えて書き込む
+        if (endflag == false && log_no < LOG_NUM)
         {
             // ログ（RAM）記録
             log_data[log_no].cnt_msdwritetime = cnt_msdwritetime;
