@@ -954,8 +954,9 @@ void intTimer(void)
 
     case 10:
 
+        // log_mode == 2(走行開始から終了まで)の間だけ記録する。
         // 約60件/秒で記録するため、上限を確認しないと log_data[] を越えて書き込む
-        if (endflag == false && log_no < LOG_NUM)
+        if (endflag == false && log_mode == 2 && log_no < LOG_NUM)
         {
             // ログ（RAM）記録
             log_data[log_no].cnt_msdwritetime = cnt_msdwritetime;
@@ -1033,7 +1034,7 @@ void intTimer(void)
             if (pushsw_get() == 1)
             {
                 pattern = 11;
-                log_mode = 1; // ログファイルオープン
+                log_mode = 2; // ログ記録中(スタートバーを経由せず直接走行開始)
                 cnt1 = 0;
                 cnt1 = 0;
                 break;
@@ -1105,6 +1106,7 @@ void intTimer(void)
             led_m(0, 0, 0, 0);
             cnt_msdwritetime = 0;
             pattern = 11;
+            log_mode = 2; // ログ記録中(pattern 4 は到達しないため、ここで走行開始とする)
             encoder.setvalue(1000);
             cnt1 = 0;
             break;
