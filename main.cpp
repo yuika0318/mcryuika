@@ -287,6 +287,9 @@ typedef struct
     signed int flagR;
     signed int flagS;
     signed int total;
+    signed int dev20; // 操舵に使う行の偏差(pattern 22,23 は 20 行目)
+    signed int dev23; // (pattern 11 は 23 行目)
+    signed int dev28; // (pattern 52,53 は 28 行目)
 
     // int senn(int linegyou)関数内で直接取得
     // ログ取得用(生データ)
@@ -563,7 +566,8 @@ int main(void)
             // fopen に失敗(SD 未挿入など)すると fp が NULL のため、書き込みは行わない
             for (unsigned int i = 0; saveOk && i < log_no; i++)
             {
-                fprintf(fp, "%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d",
+                // 末尾の「,」がないと total と画像データの先頭値がつながって CSV の列がずれる
+                fprintf(fp, "%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,",
                         log_data[i].cnt_msdwritetime,
                         log_data[i].pattern,
                         log_data[i].convertBCD,
@@ -576,7 +580,10 @@ int main(void)
                         log_data[i].flagK,
                         log_data[i].flagR,
                         log_data[i].flagS,
-                        log_data[i].total);
+                        log_data[i].total,
+                        log_data[i].dev20,
+                        log_data[i].dev23,
+                        log_data[i].dev28);
 
                 // ログ取得用(生データ)
                 // for (int u = 0; u < 3; u++)
@@ -978,6 +985,9 @@ void intTimer(void)
             log_data[log_no].flagS = lineflag_center; // センターライン検出フラグを作ったら追加
 
             log_data[log_no].total = encoder.getTotalCount();
+            log_data[log_no].dev20 = allDeviation[20];
+            log_data[log_no].dev23 = allDeviation[23];
+            log_data[log_no].dev28 = allDeviation[28];
             for (int i = 0; i < 160; i++)
             {
                 log_data[log_no].imageData0[i] = getImage(i, 60);
