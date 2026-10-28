@@ -278,6 +278,19 @@ volatile bool resetFlag = true;
 
 volatile int minIndex;
 
+// ログ用: createLineFlag の検出内容(ハーフライン・クロスラインの閾値調整のデータ収集)
+#define LINE_DBG_IMAGE_N 54  // 左右ライン検出に使う画素数(中心 ±27。crosslineWidth 55 / 2)
+#define LINE_DBG_CENTER_N 40 // 中心線検出に使う画素数(centerWidth 40)
+volatile int lineDbgRow;      // 検出に使った行(先頭行。4行分の最大値を使う)
+volatile int lineDbgMax;      // 4行分の最大輝度
+volatile int lineDbgThr;      // 明るさの閾値(最大輝度 × 倍率)
+volatile int lineDbgLeft;     // 左側で閾値を超えた画素数
+volatile int lineDbgRight;    // 右側で閾値を超えた画素数
+volatile int lineDbgCenter;   // 中心線で閾値を超えた画素数
+volatile int lineDbgCrossThr; // 左右の判定基準(この半分を超えると検出)
+volatile unsigned char lineDbgImage[LINE_DBG_IMAGE_N];
+volatile unsigned char lineDbgCenterData[LINE_DBG_CENTER_N];
+
 typedef struct
 {
     unsigned int cnt_msdwritetime;
@@ -297,6 +310,16 @@ typedef struct
     signed int dev23; // (pattern 11 は 23 行目)
     signed int dev28; // (pattern 52,53 は 28 行目)
     signed int course; // 走行開始からの走行距離(COURSE_END_COUNT の調整用)
+    signed int accel;  // エンコーダの変化量(同じ出力での坂の目安)
+    signed int lineRow;
+    signed int lineMax;
+    signed int lineThr;
+    signed int lineLeft;
+    signed int lineRight;
+    signed int lineCenter;
+    signed int lineCrossThr;
+    unsigned char lineImage[LINE_DBG_IMAGE_N];
+    unsigned char lineCenterData[LINE_DBG_CENTER_N];
 
     // int senn(int linegyou)関数内で直接取得
     // ログ取得用(生データ)
@@ -574,7 +597,7 @@ int main(void)
             for (unsigned int i = 0; saveOk && i < log_no; i++)
             {
                 // 末尾の「,」がないと total と画像データの先頭値がつながって CSV の列がずれる
-                fprintf(fp, "%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,",
+                fprintf(fp, "%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,",
                         log_data[i].cnt_msdwritetime,
                         log_data[i].pattern,
                         log_data[i].convertBCD,
@@ -591,7 +614,25 @@ int main(void)
                         log_data[i].dev20,
                         log_data[i].dev23,
                         log_data[i].dev28,
-                        log_data[i].course);
+                        log_data[i].course,
+                        log_data[i].accel,
+                        log_data[i].lineRow,
+                        log_data[i].lineMax,
+                        log_data[i].lineThr,
+                        log_data[i].lineLeft,
+                        log_data[i].lineRight,
+                        log_data[i].lineCenter,
+                        log_data[i].lineCrossThr);
+
+                // 検出に使った画素(左右ライン→中心線の順)
+                for (int t = 0; t < LINE_DBG_IMAGE_N; t++)
+                {
+                    fprintf(fp, "%d,", log_data[i].lineImage[t]);
+                }
+                for (int t = 0; t < LINE_DBG_CENTER_N; t++)
+                {
+                    fprintf(fp, "%d,", log_data[i].lineCenterData[t]);
+                }
 
                 // ログ取得用(生データ)
                 // for (int u = 0; u < 3; u++)
@@ -997,6 +1038,22 @@ void intTimer(void)
             log_data[log_no].dev23 = allDeviation[23];
             log_data[log_no].dev28 = allDeviation[28];
             log_data[log_no].course = encoder.getCourseCount();
+            log_data[log_no].accel = encoderAcceleration;
+            log_data[log_no].lineRow = lineDbgRow;
+            log_data[log_no].lineMax = lineDbgMax;
+            log_data[log_no].lineThr = lineDbgThr;
+            log_data[log_no].lineLeft = lineDbgLeft;
+            log_data[log_no].lineRight = lineDbgRight;
+            log_data[log_no].lineCenter = lineDbgCenter;
+            log_data[log_no].lineCrossThr = lineDbgCrossThr;
+            for (int i = 0; i < LINE_DBG_IMAGE_N; i++)
+            {
+                log_data[log_no].lineImage[i] = lineDbgImage[i];
+            }
+            for (int i = 0; i < LINE_DBG_CENTER_N; i++)
+            {
+                log_data[log_no].lineCenterData[i] = lineDbgCenterData[i];
+            }
             for (int i = 0; i < 160; i++)
             {
                 log_data[log_no].imageData0[i] = getImage(i, 60);
@@ -2067,6 +2124,23 @@ void createLineFlag(int rowNum)
         lineflag_center = true;
     }else{
         lineflag_center = false;
+    }
+
+    // ログ用: 検出に使った値を保存する(閾値調整のデータ収集。走行には影響しない)
+    lineDbgRow = rowNum;
+    lineDbgMax = maxBrightness;
+    lineDbgThr = brightnessThreshold;
+    lineDbgLeft = leftCount;
+    lineDbgRight = rightCount;
+    lineDbgCenter = centerCount;
+    lineDbgCrossThr = crossCountThreshold;
+    for (int i = 0; i < LINE_DBG_IMAGE_N; i++)
+    {
+        lineDbgImage[i] = imageData[IMAGE_CENTER - crosslineWidth / 2 + i];
+    }
+    for (int i = 0; i < LINE_DBG_CENTER_N; i++)
+    {
+        lineDbgCenterData[i] = centerData[IMAGE_WIDTH / 2 - centerWidth / 2 + i];
     }
 }
 // 偏差を作る関数
