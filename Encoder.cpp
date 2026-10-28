@@ -120,6 +120,12 @@ void Encoder::clear(void)
     // MTU2TCNT_3 = 0x00;
 }
 
+// 走行距離だけクリア(走行開始時に呼ぶ。終了判定の距離を走行開始からにするため)
+void Encoder::clearCourse(void)
+{
+    _course_cnt = 0;
+}
+
 // void Encoder::clearkura(void)
 // {
 //     //_total_cnt = 0;

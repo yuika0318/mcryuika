@@ -41,6 +41,12 @@
 // このとき PWM のパルス幅は 1.07ms〜1.59ms(中心 1.33ms)で、サーボの一般的な範囲に収まる
 #define HANDLE_MAX_ANGLE 30
 
+// 走行終了(pattern 101)にする走行距離(エンコーダのカウント)。走行開始時に 0 から数える。
+// 完走ログ(data0007)の合計は約 33,800(エンコーダ値は端数切り捨てのため実際は 35,000 前後)で、
+// 最後のクランクの約 800 カウント後が終点。その手前の 34,000 とする
+// ※推定値。ログの course 列(実測)を見て調整する
+#define COURSE_END_COUNT 34000
+
 //------------------------------------------------------------------//
 // マスク値設定 ×：マスクあり(無効)　○：マスク無し(有効)
 //------------------------------------------------------------------//
@@ -290,6 +296,7 @@ typedef struct
     signed int dev20; // 操舵に使う行の偏差(pattern 22,23 は 20 行目)
     signed int dev23; // (pattern 11 は 23 行目)
     signed int dev28; // (pattern 52,53 は 28 行目)
+    signed int course; // 走行開始からの走行距離(COURSE_END_COUNT の調整用)
 
     // int senn(int linegyou)関数内で直接取得
     // ログ取得用(生データ)
@@ -567,7 +574,7 @@ int main(void)
             for (unsigned int i = 0; saveOk && i < log_no; i++)
             {
                 // 末尾の「,」がないと total と画像データの先頭値がつながって CSV の列がずれる
-                fprintf(fp, "%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,",
+                fprintf(fp, "%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,",
                         log_data[i].cnt_msdwritetime,
                         log_data[i].pattern,
                         log_data[i].convertBCD,
@@ -583,7 +590,8 @@ int main(void)
                         log_data[i].total,
                         log_data[i].dev20,
                         log_data[i].dev23,
-                        log_data[i].dev28);
+                        log_data[i].dev28,
+                        log_data[i].course);
 
                 // ログ取得用(生データ)
                 // for (int u = 0; u < 3; u++)
@@ -988,6 +996,7 @@ void intTimer(void)
             log_data[log_no].dev20 = allDeviation[20];
             log_data[log_no].dev23 = allDeviation[23];
             log_data[log_no].dev28 = allDeviation[28];
+            log_data[log_no].course = encoder.getCourseCount();
             for (int i = 0; i < 160; i++)
             {
                 log_data[log_no].imageData0[i] = getImage(i, 60);
@@ -1049,6 +1058,7 @@ void intTimer(void)
             {
                 pattern = 11;
                 log_mode = 2; // ログ記録中(スタートバーを経由せず直接走行開始)
+                encoder.clearCourse();
                 cnt1 = 0;
                 cnt1 = 0;
                 break;
@@ -1121,6 +1131,7 @@ void intTimer(void)
             cnt_msdwritetime = 0;
             pattern = 11;
             log_mode = 2; // ログ記録中(pattern 4 は到達しないため、ここで走行開始とする)
+            encoder.clearCourse();
             encoder.setvalue(1000);
             cnt1 = 0;
             break;
@@ -1198,7 +1209,7 @@ void intTimer(void)
         myHandleVal = allDeviation[23] * 0.28;
         handle(myHandleVal);
 
-        if (encoder.getCourseCount() >= 1120 * 200)
+        if (encoder.getCourseCount() >= COURSE_END_COUNT)
         {
             pattern = 101;
             cnt1 = 0;
