@@ -1325,7 +1325,7 @@ void intTimer(void)
             // 右クランクと判断
             cnt1 = 0;
             led_m(100, 0, 1, 1);
-            handle(-21);
+            handle(-22); // 出口で舵が足りない走行が多いため -21 から 1 増やした(ログ data0009, 0011)
             motor(100, -90);
             pattern = 41;
             encoder.clear();
@@ -1356,7 +1356,7 @@ void intTimer(void)
     case 41:
         // 右クランククリア処理　安定するまで少し待つ
         led_m(100, 0, 1, 1);
-        if (cnt1>= 380)
+        if (cnt1>= 410) // 380 から延長(出口で偏差が負のまま約300ms残るため)
         {
            // while(1) motor(0, 0);
             encoder.clear();
