@@ -36,6 +36,40 @@
 // 値を足すと右　減らすと左
 // 3100
 #define HANDLE_STEP 18 // 1 degree value
+// 舵角の上限(左右とも)。コード中で使う最大は crankHandleVal の 27、偏差×ゲインの最大は
+// 画像の半幅 80 × 0.32 = 25.6(pattern 52)なので、それらを切らない 30 とする。
+// このとき PWM のパルス幅は 1.07ms〜1.59ms(中心 1.33ms)で、サーボの一般的な範囲に収まる
+#define HANDLE_MAX_ANGLE 30
+
+// 走行終了(pattern 101)にする走行距離(エンコーダのカウント)。走行開始時に 0 から数える。
+// 完走ログ(data0007)の合計は約 33,800(エンコーダ値は端数切り捨てのため実際は 35,000 前後)で、
+// 最後のクランクの約 800 カウント後が終点。その手前の 34,000 とする
+// ※推定値。ログの course 列(実測)を見て調整する
+#define COURSE_END_COUNT 34000
+
+// ライン検出の明るさ閾値の下限(pattern 5 以降)。暗い画像での誤検知を防ぐ
+// 根拠: ログ data0011 で、最大輝度が 200 未満なのにフラグが立った47行のうち44行は、左クランク後の
+// 暗い区間(35.6〜39秒、最大輝度 39〜171)で、そこでハーフラインを誤検知して 53 がタイムアウトした。
+// 本物のハーフラインはすべて最大輝度 255(閾値 239)だった。
+// 200 では暗めの場所の本物を取りこぼす恐れがあるため、誤検知した区間(最大輝度 171 以下)だけ
+// 防げる 180 とした
+#define LINE_BRIGHTNESS_MIN 180
+
+// 右レーンチェンジ(pattern 54, 55)を、時間ではなくエンコーダ距離で終わらせる。
+// 時間だと速度で走る距離が変わり、舵角が固定のため曲がる角度も変わる
+// (過去ログ data0008: 同じ時間でエンコーダ値が 20 前後と 6〜9 の走行があり、距離は約 2.5 倍違った)。
+// 距離は、エンコーダ値 20 前後の標準的な速度での、従来の時間とほぼ同じ値にした
+// (54 は従来 55ms ≒ 70 カウントを約2割短くして曲がり始めを早める。55 は従来 125〜140ms ≒ 150 カウント)。
+// MAX_MS は、車が止まったときなどに終わらなくなるのを防ぐ保険の上限(ms)
+// 実車所見: 54 を 55 に短くしても右は早くなくてよく、-21 / 150 は切りすぎだった(2026-10-29)。
+// 54 は従来の約 70、55 は舵を -20 に戻すのに合わせて 140 にした
+#define LANE_R_STRAIGHT_COUNT 70
+#define LANE_R_STRAIGHT_MAX_MS 120
+#define LANE_R_TURN_COUNT 140
+#define LANE_R_TURN_MAX_MS 300
+// 左レーンチェンジは曲がり始めが遅いため、54 を距離(約 70 カウント)の約4割短くした
+#define LANE_L_STRAIGHT_COUNT 40
+#define LANE_L_STRAIGHT_MAX_MS 100
 
 //------------------------------------------------------------------//
 // マスク値設定 ×：マスクあり(無効)　○：マスク無し(有効)
@@ -268,6 +302,19 @@ volatile bool resetFlag = true;
 
 volatile int minIndex;
 
+// ログ用: createLineFlag の検出内容(ハーフライン・クロスラインの閾値調整のデータ収集)
+#define LINE_DBG_IMAGE_N 54  // 左右ライン検出に使う画素数(中心 ±27。crosslineWidth 55 / 2)
+#define LINE_DBG_CENTER_N 40 // 中心線検出に使う画素数(centerWidth 40)
+volatile int lineDbgRow;      // 検出に使った行(先頭行。4行分の最大値を使う)
+volatile int lineDbgMax;      // 4行分の最大輝度
+volatile int lineDbgThr;      // 明るさの閾値(最大輝度 × 倍率)
+volatile int lineDbgLeft;     // 左側で閾値を超えた画素数
+volatile int lineDbgRight;    // 右側で閾値を超えた画素数
+volatile int lineDbgCenter;   // 中心線で閾値を超えた画素数
+volatile int lineDbgCrossThr; // 左右の判定基準(この半分を超えると検出)
+volatile unsigned char lineDbgImage[LINE_DBG_IMAGE_N];
+volatile unsigned char lineDbgCenterData[LINE_DBG_CENTER_N];
+
 typedef struct
 {
     unsigned int cnt_msdwritetime;
@@ -283,6 +330,20 @@ typedef struct
     signed int flagR;
     signed int flagS;
     signed int total;
+    signed int dev20; // 操舵に使う行の偏差(pattern 22,23 は 20 行目)
+    signed int dev23; // (pattern 11 は 23 行目)
+    signed int dev28; // (pattern 52,53 は 28 行目)
+    signed int course; // 走行開始からの走行距離(COURSE_END_COUNT の調整用)
+    signed int accel;  // エンコーダの変化量(同じ出力での坂の目安)
+    signed int lineRow;
+    signed int lineMax;
+    signed int lineThr;
+    signed int lineLeft;
+    signed int lineRight;
+    signed int lineCenter;
+    signed int lineCrossThr;
+    unsigned char lineImage[LINE_DBG_IMAGE_N];
+    unsigned char lineCenterData[LINE_DBG_CENTER_N];
 
     // int senn(int linegyou)関数内で直接取得
     // ログ取得用(生データ)
@@ -549,14 +610,18 @@ int main(void)
                 fclose(fp);
             }
             sprintf(moji_work, "/storage/data%04d.csv", i);
+            bool saveOk = false; // SD に書き込めたか
             if ((fp = fopen(moji_work, "w")) != NULL)
             {
+                saveOk = true;
                 fprintf(fp, "Log %d\n", i);
             }
 
-            for (unsigned int i = 0; i < log_no; i++)
+            // fopen に失敗(SD 未挿入など)すると fp が NULL のため、書き込みは行わない
+            for (unsigned int i = 0; saveOk && i < log_no; i++)
             {
-                fprintf(fp, "%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d",
+                // 末尾の「,」がないと total と画像データの先頭値がつながって CSV の列がずれる
+                fprintf(fp, "%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,",
                         log_data[i].cnt_msdwritetime,
                         log_data[i].pattern,
                         log_data[i].convertBCD,
@@ -569,7 +634,29 @@ int main(void)
                         log_data[i].flagK,
                         log_data[i].flagR,
                         log_data[i].flagS,
-                        log_data[i].total);
+                        log_data[i].total,
+                        log_data[i].dev20,
+                        log_data[i].dev23,
+                        log_data[i].dev28,
+                        log_data[i].course,
+                        log_data[i].accel,
+                        log_data[i].lineRow,
+                        log_data[i].lineMax,
+                        log_data[i].lineThr,
+                        log_data[i].lineLeft,
+                        log_data[i].lineRight,
+                        log_data[i].lineCenter,
+                        log_data[i].lineCrossThr);
+
+                // 検出に使った画素(左右ライン→中心線の順)
+                for (int t = 0; t < LINE_DBG_IMAGE_N; t++)
+                {
+                    fprintf(fp, "%d,", log_data[i].lineImage[t]);
+                }
+                for (int t = 0; t < LINE_DBG_CENTER_N; t++)
+                {
+                    fprintf(fp, "%d,", log_data[i].lineCenterData[t]);
+                }
 
                 // ログ取得用(生データ)
                 // for (int u = 0; u < 3; u++)
@@ -590,10 +677,14 @@ int main(void)
             // //                convertBCD_CharToLong(sensor_inp(0xff)), msd_handle, ALL_hennsa[45],
             // //                encoder.getCnt(), msd_l, msd_r);
             // //    }
-            fclose(fp); // fcloseしないと保存されない
+            if (saveOk)
+            {
+                fclose(fp); // fcloseしないと保存されない
+            }
             while (true)
             {
-                led_m(50, 0, 0, 1); // スタートバーセットOK状態→緑色点灯
+                // 保存成功→青色点灯、保存失敗→赤色点灯
+                led_m(50, saveOk ? 0 : 1, 0, saveOk ? 1 : 0);
             }
         }
     }
@@ -947,7 +1038,9 @@ void intTimer(void)
 
     case 10:
 
-        if (endflag == false)
+        // log_mode == 2(走行開始から終了まで)の間だけ記録する。
+        // 約60件/秒で記録するため、上限を確認しないと log_data[] を越えて書き込む
+        if (endflag == false && log_mode == 2 && log_no < LOG_NUM)
         {
             // ログ（RAM）記録
             log_data[log_no].cnt_msdwritetime = cnt_msdwritetime;
@@ -965,6 +1058,26 @@ void intTimer(void)
             log_data[log_no].flagS = lineflag_center; // センターライン検出フラグを作ったら追加
 
             log_data[log_no].total = encoder.getTotalCount();
+            log_data[log_no].dev20 = allDeviation[20];
+            log_data[log_no].dev23 = allDeviation[23];
+            log_data[log_no].dev28 = allDeviation[28];
+            log_data[log_no].course = encoder.getCourseCount();
+            log_data[log_no].accel = encoderAcceleration;
+            log_data[log_no].lineRow = lineDbgRow;
+            log_data[log_no].lineMax = lineDbgMax;
+            log_data[log_no].lineThr = lineDbgThr;
+            log_data[log_no].lineLeft = lineDbgLeft;
+            log_data[log_no].lineRight = lineDbgRight;
+            log_data[log_no].lineCenter = lineDbgCenter;
+            log_data[log_no].lineCrossThr = lineDbgCrossThr;
+            for (int i = 0; i < LINE_DBG_IMAGE_N; i++)
+            {
+                log_data[log_no].lineImage[i] = lineDbgImage[i];
+            }
+            for (int i = 0; i < LINE_DBG_CENTER_N; i++)
+            {
+                log_data[log_no].lineCenterData[i] = lineDbgCenterData[i];
+            }
             for (int i = 0; i < 160; i++)
             {
                 log_data[log_no].imageData0[i] = getImage(i, 60);
@@ -1025,7 +1138,8 @@ void intTimer(void)
             if (pushsw_get() == 1)
             {
                 pattern = 11;
-                log_mode = 1; // ログファイルオープン
+                log_mode = 2; // ログ記録中(スタートバーを経由せず直接走行開始)
+                encoder.clearCourse();
                 cnt1 = 0;
                 cnt1 = 0;
                 break;
@@ -1097,6 +1211,8 @@ void intTimer(void)
             led_m(0, 0, 0, 0);
             cnt_msdwritetime = 0;
             pattern = 11;
+            log_mode = 2; // ログ記録中(pattern 4 は到達しないため、ここで走行開始とする)
+            encoder.clearCourse();
             encoder.setvalue(1000);
             cnt1 = 0;
             break;
@@ -1118,6 +1234,11 @@ void intTimer(void)
         crankMotorPowerIN = 40;
         if(cnt1>900)//if(abs(allDeviation[18])<15&&cnt1>2000)//&&encoder.getTotalCount()>400)
         {
+            // 注意: 以下の3つは if が並列で、後の判定が前の pattern を上書きする。
+            // lineflag_cross は left && right のときだけ成立するため、cross のときは
+            // right と left も成立し、最後の left で pattern 51(左ハーフライン)になる。
+            // pattern 21 には遷移せず、51 → 52 で cross を再検出して 22 へ進む。
+            // else if にすると遷移が 21 → 22 に変わるため、実車で確認するまで直していない
             if (lineflag_cross)
             {
                 encoder.clear();
@@ -1129,9 +1250,9 @@ void intTimer(void)
                 encoder.clear();
                 pattern = 51;
                 laneStraightMotorPower = 80;
-                laneDistance = 125;
+                laneDistance = 140; // 125 から延長(右レーンチェンジで曲がり切れないため。左と同じ)
 
-                laneHandleVal = -20;
+                laneHandleVal = -20; // -21 では切りすぎだったため -20 に戻した
                 laneMotorPowerLeft = 85;
                 laneMotorPowerRight = -20;
             }
@@ -1169,7 +1290,7 @@ void intTimer(void)
         myHandleVal = allDeviation[23] * 0.28;
         handle(myHandleVal);
 
-        if (encoder.getCourseCount() >= 1120 * 200)
+        if (encoder.getCourseCount() >= COURSE_END_COUNT)
         {
             pattern = 101;
             cnt1 = 0;
@@ -1215,7 +1336,7 @@ void intTimer(void)
             // 左クランクと判断]
             cnt1 = 0;
             led_m(100, 1, 1, 0);
-            handle(25);
+            handle(26); // 25 から 1 増やした(何回か走らせると左クランクで曲がり切れなくなったため)
         
             motor(-100, 100);
             pattern = 31;
@@ -1228,7 +1349,7 @@ void intTimer(void)
             // 右クランクと判断
             cnt1 = 0;
             led_m(100, 0, 1, 1);
-            handle(-21);
+            handle(-22); // 出口で舵が足りない走行が多いため -21 から 1 増やした(ログ data0009, 0011)
             motor(100, -90);
             pattern = 41;
             encoder.clear();
@@ -1247,7 +1368,7 @@ void intTimer(void)
         // 左クランククリア処理　安定するまで少し待つ
 
         led_m(100, 1, 0, 1);
-        if (cnt1>= 410)
+        if (cnt1>= 440) // 410 から延長
         {
             //while(1) motor(0, 0);
             encoder.clear();
@@ -1259,7 +1380,7 @@ void intTimer(void)
     case 41:
         // 右クランククリア処理　安定するまで少し待つ
         led_m(100, 0, 1, 1);
-        if (cnt1>= 380)
+        if (cnt1>= 410) // 380 から延長(出口で偏差が負のまま約300ms残るため)
         {
            // while(1) motor(0, 0);
             encoder.clear();
@@ -1327,6 +1448,7 @@ void intTimer(void)
             led_m(100, 1, 1, 0);
 
             cnt1 = 0;
+            encoder.setmaga(0); // 右レーンチェンジの距離の起点(getMagaCount)
             break;
         }
         motor(60, 60);
@@ -1342,12 +1464,14 @@ void intTimer(void)
 
         motor(laneStraightMotorPower, laneStraightMotorPower);
        //while(1) motor(0, 0);
-        if (cnt1 >= 55)
+        // 直進は左右とも距離で終わる(laneHandleVal < 0 が右)
+        if (laneHandleVal < 0 ? (encoder.getMagaCount() >= LANE_R_STRAIGHT_COUNT || cnt1 >= LANE_R_STRAIGHT_MAX_MS) : (encoder.getMagaCount() >= LANE_L_STRAIGHT_COUNT || cnt1 >= LANE_L_STRAIGHT_MAX_MS))
         {
 
             pattern = 55;
             led_m(100, 1, 0, 0);
             cnt1 = 0;
+            encoder.setmaga(0);
         }
         break;
 
@@ -1355,7 +1479,8 @@ void intTimer(void)
 
         handle(laneHandleVal);
         motor(laneMotorPowerLeft, laneCounterMotorPowerRight);
-        if (cnt1 > laneDistance)
+        // 右レーンチェンジ(laneHandleVal < 0)は距離で、左は従来どおり時間で終わる
+        if (laneHandleVal < 0 ? (encoder.getMagaCount() >= LANE_R_TURN_COUNT || cnt1 > LANE_R_TURN_MAX_MS) : (cnt1 > laneDistance))
         {
            // while(1) motor(0, 0);
             pattern = 11;
@@ -1520,6 +1645,17 @@ void motor(int accele_l, int accele_r)
 //------------------------------------------------------------------//
 void handle(int angle)
 {
+    // 範囲外の値で angle * HANDLE_STEP が 16bit レジスタ(MTU2TGRD_0)からあふれたり、
+    // サーボが機械的な限界を越えたりするのを防ぐ
+    if (angle > HANDLE_MAX_ANGLE)
+    {
+        angle = HANDLE_MAX_ANGLE;
+    }
+    if (angle < -HANDLE_MAX_ANGLE)
+    {
+        angle = -HANDLE_MAX_ANGLE;
+    }
+
     msd_handle = -angle;
     // When the servo move from left to right in reverse, replace "-" with "+"
     MTU2TGRD_0 = SERVO_CENTER - angle * HANDLE_STEP;
@@ -1927,6 +2063,12 @@ void createLineFlag(int rowNum)
    // brightnessThreshold = maxBrightness * 0.985;//1.0;//0.98;//84
    if(pattern<=4) brightnessThreshold = maxBrightness * 0.57;
    else brightnessThreshold = maxBrightness * 0.938;
+    // 画像が暗いと(最大輝度が低いと)相対閾値も下がり、床の模様を拾ってハーフラインを誤検知する。
+    // 通常の最大輝度は 255(閾値 239)で、本物のハーフラインはすべて 255 だった。下限を設ける
+    if (pattern > 4 && brightnessThreshold < LINE_BRIGHTNESS_MIN)
+    {
+        brightnessThreshold = LINE_BRIGHTNESS_MIN;
+    }
     for (int y = rowNum; y < rowNum + 4; y++)
     {
         for (int x = 0; x < IMAGE_WIDTH; x++)
@@ -2016,6 +2158,23 @@ void createLineFlag(int rowNum)
         lineflag_center = true;
     }else{
         lineflag_center = false;
+    }
+
+    // ログ用: 検出に使った値を保存する(閾値調整のデータ収集。走行には影響しない)
+    lineDbgRow = rowNum;
+    lineDbgMax = maxBrightness;
+    lineDbgThr = brightnessThreshold;
+    lineDbgLeft = leftCount;
+    lineDbgRight = rightCount;
+    lineDbgCenter = centerCount;
+    lineDbgCrossThr = crossCountThreshold;
+    for (int i = 0; i < LINE_DBG_IMAGE_N; i++)
+    {
+        lineDbgImage[i] = imageData[IMAGE_CENTER - crosslineWidth / 2 + i];
+    }
+    for (int i = 0; i < LINE_DBG_CENTER_N; i++)
+    {
+        lineDbgCenterData[i] = centerData[IMAGE_WIDTH / 2 - centerWidth / 2 + i];
     }
 }
 // 偏差を作る関数

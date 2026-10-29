@@ -42,6 +42,7 @@ public:
 
     void clear(void);     // 全カウントクリア
     void clearkura(void); // 全カウントクリア
+    void clearCourse(void); // 走行距離(getCourseCount)だけをクリア
 
     int getTotalCount(void); // トータルカウント取得
     int getMagaCount(void);  // クランクカウント取得
