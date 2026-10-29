@@ -55,6 +55,17 @@
 // 防げる 180 とした
 #define LINE_BRIGHTNESS_MIN 180
 
+// 右レーンチェンジ(pattern 54, 55)を、時間ではなくエンコーダ距離で終わらせる。
+// 時間だと速度で走る距離が変わり、舵角が固定のため曲がる角度も変わる
+// (過去ログ data0008: 同じ時間でエンコーダ値が 20 前後と 6〜9 の走行があり、距離は約 2.5 倍違った)。
+// 距離は、エンコーダ値 20 前後の標準的な速度での、従来の時間とほぼ同じ値にした
+// (54 は従来 55ms ≒ 70 カウントを約2割短くして曲がり始めを早める。55 は従来 125〜140ms ≒ 150 カウント)。
+// MAX_MS は、車が止まったときなどに終わらなくなるのを防ぐ保険の上限(ms)
+#define LANE_R_STRAIGHT_COUNT 55
+#define LANE_R_STRAIGHT_MAX_MS 120
+#define LANE_R_TURN_COUNT 150
+#define LANE_R_TURN_MAX_MS 300
+
 //------------------------------------------------------------------//
 // マスク値設定 ×：マスクあり(無効)　○：マスク無し(有効)
 //------------------------------------------------------------------//
@@ -1432,6 +1443,7 @@ void intTimer(void)
             led_m(100, 1, 1, 0);
 
             cnt1 = 0;
+            encoder.setmaga(0); // 右レーンチェンジの距離の起点(getMagaCount)
             break;
         }
         motor(60, 60);
@@ -1447,12 +1459,14 @@ void intTimer(void)
 
         motor(laneStraightMotorPower, laneStraightMotorPower);
        //while(1) motor(0, 0);
-        if (cnt1 >= 55)
+        // 右レーンチェンジ(laneHandleVal < 0)は距離で、左は従来どおり時間で終わる
+        if (laneHandleVal < 0 ? (encoder.getMagaCount() >= LANE_R_STRAIGHT_COUNT || cnt1 >= LANE_R_STRAIGHT_MAX_MS) : (cnt1 >= 55))
         {
 
             pattern = 55;
             led_m(100, 1, 0, 0);
             cnt1 = 0;
+            encoder.setmaga(0);
         }
         break;
 
@@ -1460,7 +1474,8 @@ void intTimer(void)
 
         handle(laneHandleVal);
         motor(laneMotorPowerLeft, laneCounterMotorPowerRight);
-        if (cnt1 > laneDistance)
+        // 右レーンチェンジ(laneHandleVal < 0)は距離で、左は従来どおり時間で終わる
+        if (laneHandleVal < 0 ? (encoder.getMagaCount() >= LANE_R_TURN_COUNT || cnt1 > LANE_R_TURN_MAX_MS) : (cnt1 > laneDistance))
         {
            // while(1) motor(0, 0);
             pattern = 11;
