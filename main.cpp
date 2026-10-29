@@ -61,10 +61,15 @@
 // 距離は、エンコーダ値 20 前後の標準的な速度での、従来の時間とほぼ同じ値にした
 // (54 は従来 55ms ≒ 70 カウントを約2割短くして曲がり始めを早める。55 は従来 125〜140ms ≒ 150 カウント)。
 // MAX_MS は、車が止まったときなどに終わらなくなるのを防ぐ保険の上限(ms)
-#define LANE_R_STRAIGHT_COUNT 55
+// 実車所見: 54 を 55 に短くしても右は早くなくてよく、-21 / 150 は切りすぎだった(2026-10-29)。
+// 54 は従来の約 70、55 は舵を -20 に戻すのに合わせて 140 にした
+#define LANE_R_STRAIGHT_COUNT 70
 #define LANE_R_STRAIGHT_MAX_MS 120
-#define LANE_R_TURN_COUNT 150
+#define LANE_R_TURN_COUNT 140
 #define LANE_R_TURN_MAX_MS 300
+// 左レーンチェンジは曲がり始めが遅いため、54 を距離(約 70 カウント)の約4割短くした
+#define LANE_L_STRAIGHT_COUNT 40
+#define LANE_L_STRAIGHT_MAX_MS 100
 
 //------------------------------------------------------------------//
 // マスク値設定 ×：マスクあり(無効)　○：マスク無し(有効)
@@ -1247,7 +1252,7 @@ void intTimer(void)
                 laneStraightMotorPower = 80;
                 laneDistance = 140; // 125 から延長(右レーンチェンジで曲がり切れないため。左と同じ)
 
-                laneHandleVal = -21; // -20 から 1 増やした
+                laneHandleVal = -20; // -21 では切りすぎだったため -20 に戻した
                 laneMotorPowerLeft = 85;
                 laneMotorPowerRight = -20;
             }
@@ -1331,7 +1336,7 @@ void intTimer(void)
             // 左クランクと判断]
             cnt1 = 0;
             led_m(100, 1, 1, 0);
-            handle(25);
+            handle(26); // 25 から 1 増やした(何回か走らせると左クランクで曲がり切れなくなったため)
         
             motor(-100, 100);
             pattern = 31;
@@ -1363,7 +1368,7 @@ void intTimer(void)
         // 左クランククリア処理　安定するまで少し待つ
 
         led_m(100, 1, 0, 1);
-        if (cnt1>= 410)
+        if (cnt1>= 440) // 410 から延長
         {
             //while(1) motor(0, 0);
             encoder.clear();
@@ -1459,8 +1464,8 @@ void intTimer(void)
 
         motor(laneStraightMotorPower, laneStraightMotorPower);
        //while(1) motor(0, 0);
-        // 右レーンチェンジ(laneHandleVal < 0)は距離で、左は従来どおり時間で終わる
-        if (laneHandleVal < 0 ? (encoder.getMagaCount() >= LANE_R_STRAIGHT_COUNT || cnt1 >= LANE_R_STRAIGHT_MAX_MS) : (cnt1 >= 55))
+        // 直進は左右とも距離で終わる(laneHandleVal < 0 が右)
+        if (laneHandleVal < 0 ? (encoder.getMagaCount() >= LANE_R_STRAIGHT_COUNT || cnt1 >= LANE_R_STRAIGHT_MAX_MS) : (encoder.getMagaCount() >= LANE_L_STRAIGHT_COUNT || cnt1 >= LANE_L_STRAIGHT_MAX_MS))
         {
 
             pattern = 55;
