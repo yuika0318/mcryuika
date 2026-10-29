@@ -47,6 +47,12 @@
 // ※推定値。ログの course 列(実測)を見て調整する
 #define COURSE_END_COUNT 34000
 
+// ライン検出の明るさ閾値の下限(pattern 5 以降)。暗い画像での誤検知を防ぐ
+// 根拠: ログ data0011 で、最大輝度が 200 未満なのにフラグが立った47行のうち44行は、左クランク後の
+// 暗い区間(35.6〜39秒、最大輝度 39〜171)で、そこでハーフラインを誤検知して 53 がタイムアウトした。
+// 本物のハーフラインはすべて最大輝度 255(閾値 239)だった
+#define LINE_BRIGHTNESS_MIN 200
+
 //------------------------------------------------------------------//
 // マスク値設定 ×：マスクあり(無効)　○：マスク無し(有効)
 //------------------------------------------------------------------//
@@ -2035,6 +2041,12 @@ void createLineFlag(int rowNum)
    // brightnessThreshold = maxBrightness * 0.985;//1.0;//0.98;//84
    if(pattern<=4) brightnessThreshold = maxBrightness * 0.57;
    else brightnessThreshold = maxBrightness * 0.938;
+    // 画像が暗いと(最大輝度が低いと)相対閾値も下がり、床の模様を拾ってハーフラインを誤検知する。
+    // 通常の最大輝度は 255(閾値 239)で、本物のハーフラインはすべて 255 だった。下限を設ける
+    if (pattern > 4 && brightnessThreshold < LINE_BRIGHTNESS_MIN)
+    {
+        brightnessThreshold = LINE_BRIGHTNESS_MIN;
+    }
     for (int y = rowNum; y < rowNum + 4; y++)
     {
         for (int x = 0; x < IMAGE_WIDTH; x++)
